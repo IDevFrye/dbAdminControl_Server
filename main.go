@@ -166,6 +166,12 @@ func main() {
 	r.Handle("/goods/{id}", authenticate(http.HandlerFunc(updateGood))).Methods("PUT")    // Обновить товар по ID
 	r.Handle("/goods/{id}", authenticate(http.HandlerFunc(deleteGood))).Methods("DELETE") // Удалить товар по ID
 
+	// Заявки
+	r.Handle("/sales", authenticate(http.HandlerFunc(getSales))).Methods("GET")           // Получить все заявки
+	r.Handle("/sales", authenticate(http.HandlerFunc(addSale))).Methods("POST")           // Добавить новую заявку
+	r.Handle("/sales/{id}", authenticate(http.HandlerFunc(updateSale))).Methods("PUT")    // Обновить заявку по ID
+	r.Handle("/sales/{id}", authenticate(http.HandlerFunc(deleteSale))).Methods("DELETE") // Удалить заявку по ID
+
 	// Настройка CORS
 	// Настройка CORS
 	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"})
@@ -314,6 +320,7 @@ func getDemandChange(w http.ResponseWriter, r *http.Request) {
 }
 
 // Обработчик для получения количества товаров на складах
+// Обработчик для получения количества товаров на складах
 func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 	goodID := r.URL.Query().Get("good_id")
 	if goodID == "" {
@@ -323,13 +330,13 @@ func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 
 	// Запрос для получения количества товара из обеих таблиц складов
 	query := `
-		SELECT 
-			(SELECT good_count FROM warehouse1 WHERE good_id = $1) AS warehouse1_count,
-			(SELECT good_count FROM warehouse2 WHERE good_id = $1) AS warehouse2_count
-	`
+        SELECT 
+            COALESCE((SELECT good_count FROM warehouse1 WHERE good_id = $1), 0) AS warehouse1_count,
+            COALESCE((SELECT good_count FROM warehouse2 WHERE good_id = $1), 0) AS warehouse2_count
+    `
 	row := db.QueryRow(query, goodID)
 
-	var warehouse1Count, warehouse2Count sql.NullInt64
+	var warehouse1Count, warehouse2Count int64
 	if err := row.Scan(&warehouse1Count, &warehouse2Count); err != nil {
 		http.Error(w, "Could not fetch warehouse data", http.StatusInternalServerError)
 		return
@@ -337,11 +344,11 @@ func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 
 	// Создание структуры ответа
 	response := struct {
-		Warehouse1Count *int64 `json:"warehouse1_count"`
-		Warehouse2Count *int64 `json:"warehouse2_count"`
+		Warehouse1Count int64 `json:"warehouse1_count"`
+		Warehouse2Count int64 `json:"warehouse2_count"`
 	}{
-		Warehouse1Count: nullInt64ToPtr(warehouse1Count),
-		Warehouse2Count: nullInt64ToPtr(warehouse2Count),
+		Warehouse1Count: warehouse1Count,
+		Warehouse2Count: warehouse2Count,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -364,16 +371,22 @@ func getSalesCounts(w http.ResponseWriter, r *http.Request) {
 
 	// Подключение к базе данных и выполнение запроса
 	err := db.QueryRow(`
-        SELECT SUM(s.good_count), g.priority 
+        SELECT COALESCE(SUM(s.good_count), 0) AS total_quantity, COALESCE(g.priority, 0) AS priority 
         FROM sales s 
-        INNER JOIN goods g ON s.good_id = g.id 
-        WHERE s.good_id = $1 
+        RIGHT JOIN goods g ON s.good_id = g.id 
+        WHERE g.id = $1 
         GROUP BY g.priority
     `, goodID).Scan(&quantity, &priority)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		// Проверяем, не является ли ошибка ошибкой "no rows"
+		if err == sql.ErrNoRows {
+			quantity = 0
+			priority = 0
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Возвращаем данные в формате JSON
@@ -430,14 +443,15 @@ func forecastDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 type GoodForTransfer struct {
+	GoodID         int     `json:"good_id"` // Добавлено поле ID
 	GoodName       string  `json:"good_name"`
 	NeedToTransfer string  `json:"need_to_transfer"`
-	Priority       float64 `json:"priority"` // Добавлено поле для приоритета
+	Priority       float64 `json:"priority"`
 }
 
 func getGoodsForTransfer(w http.ResponseWriter, r *http.Request) {
-	// Вызов хранимой функции без параметров
-	rows, err := db.Query("SELECT * FROM get_goods_for_transfer()")
+	// Вызов хранимой функции или SQL-запроса, который должен возвращать ID товара
+	rows, err := db.Query("SELECT good_id, good_name, need_to_transfer, priority FROM get_goods_for_transfer()") // Изменено на good_id
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Ошибка выполнения запроса: %v", err), http.StatusInternalServerError)
 		return
@@ -450,7 +464,8 @@ func getGoodsForTransfer(w http.ResponseWriter, r *http.Request) {
 	// Обрабатываем строки результата
 	for rows.Next() {
 		var g GoodForTransfer
-		if err := rows.Scan(&g.GoodName, &g.NeedToTransfer, &g.Priority); err != nil { // Добавляем Priority
+		// Сканируем также поле ID товара
+		if err := rows.Scan(&g.GoodID, &g.GoodName, &g.NeedToTransfer, &g.Priority); err != nil {
 			http.Error(w, fmt.Sprintf("Ошибка чтения строки: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -476,7 +491,7 @@ type Good struct {
 
 // Получить все товары
 func getGoods1(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, name, priority FROM goods ORDER BY priority DESC")
+	rows, err := db.Query("SELECT id, name, priority FROM goods ORDER BY id ASC")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -560,11 +575,15 @@ type TransferRequest struct {
 // API для обработки списания товара с учетом заявок
 func transferGoods(w http.ResponseWriter, r *http.Request) {
 	var transfer TransferRequest
+
 	// Попытка декодирования JSON
 	if err := json.NewDecoder(r.Body).Decode(&transfer); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Логирование полученных данных
+	log.Printf("Received transfer request: %+v\n", transfer)
 
 	// Проверяем, что получили нужные поля
 	if transfer.GoodID == 0 || transfer.TransferAmount == 0 {
@@ -576,28 +595,41 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 	var salesCount int
 	err := db.QueryRow("SELECT SUM(good_count) FROM sales WHERE good_id=$1", transfer.GoodID).Scan(&salesCount)
 	if err != nil {
+		log.Printf("Error querying sales: %v\n", err)
 		http.Error(w, "Ошибка при запросе количества товара в заявках", http.StatusInternalServerError)
 		return
 	}
+
+	// Логирование количества товара в заявках
+	log.Printf("Sales count for good_id %d: %d\n", transfer.GoodID, salesCount)
 
 	// Определяем количество товара на складе 1
 	var availableInWarehouse1 int
 	err = db.QueryRow("SELECT good_count FROM warehouse1 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse1)
 	if err != nil {
+		log.Printf("Error querying warehouse1: %v\n", err)
 		http.Error(w, "Ошибка при запросе товара на складе 1", http.StatusInternalServerError)
 		return
 	}
+
+	// Логирование количества товара на складе 1
+	log.Printf("Available in warehouse1 for good_id %d: %d\n", transfer.GoodID, availableInWarehouse1)
 
 	// Определяем количество товара на складе 2
 	var availableInWarehouse2 int
 	err = db.QueryRow("SELECT good_count FROM warehouse2 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse2)
 	if err != nil {
+		log.Printf("Error querying warehouse2: %v\n", err)
 		http.Error(w, "Ошибка при запросе товара на складе 2", http.StatusInternalServerError)
 		return
 	}
 
+	// Логирование количества товара на складе 2
+	log.Printf("Available in warehouse2 for good_id %d: %d\n", transfer.GoodID, availableInWarehouse2)
+
 	// Проверка на возможность выполнения всех заявок
 	if availableInWarehouse1+availableInWarehouse2 < salesCount {
+		log.Printf("Not enough goods for sales: available (%d+%d) < sales (%d)\n", availableInWarehouse1, availableInWarehouse2, salesCount)
 		http.Error(w, "Невозможно выполнить заявки по товару — недостаточно товара на складах", http.StatusBadRequest)
 		return
 	}
@@ -615,6 +647,7 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("UPDATE warehouse1 SET good_count = good_count - $1 WHERE good_id = $2", salesCount, transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
+			log.Printf("Error updating warehouse1: %v\n", err)
 			http.Error(w, "Ошибка при списании товара со склада 1", http.StatusInternalServerError)
 			return
 		}
@@ -622,6 +655,7 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("DELETE FROM sales WHERE good_id = $1", transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
+			log.Printf("Error deleting sales: %v\n", err)
 			http.Error(w, "Ошибка при удалении заявок", http.StatusInternalServerError)
 			return
 		}
@@ -630,6 +664,7 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("UPDATE warehouse1 SET good_count = 0 WHERE good_id = $1", transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
+			log.Printf("Error updating warehouse1 to zero: %v\n", err)
 			http.Error(w, "Ошибка при списании товара со склада 1", http.StatusInternalServerError)
 			return
 		}
@@ -639,6 +674,7 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("UPDATE warehouse2 SET good_count = good_count - $1 WHERE good_id = $2", remainingSalesCount, transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
+			log.Printf("Error updating warehouse2: %v\n", err)
 			http.Error(w, "Ошибка при списании товара со склада 2", http.StatusInternalServerError)
 			return
 		}
@@ -647,6 +683,7 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec("DELETE FROM sales WHERE good_id = $1", transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
+			log.Printf("Error deleting sales after warehouse2 update: %v\n", err)
 			http.Error(w, "Ошибка при удалении заявок", http.StatusInternalServerError)
 			return
 		}
@@ -655,10 +692,104 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 	// Фиксируем транзакцию
 	err = tx.Commit()
 	if err != nil {
+		log.Printf("Error committing transaction: %v\n", err)
 		http.Error(w, "Ошибка при фиксации транзакции", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Товар успешно списан и заявки выполнены"))
+}
+
+// Структура для заявки
+type Sale struct {
+	ID         int    `json:"id"`
+	GoodID     int    `json:"good_id"`
+	GoodCount  int    `json:"good_count"`
+	CreateDate string `json:"create_date"`
+	GoodName   string `json:"good_name"` // Новое поле для названия товара
+}
+
+// Получить все заявки
+// Получить заявки
+func getSales(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+		SELECT s.id, s.good_id, g.name AS good_name, s.good_count, s.create_date 
+		FROM sales s 
+		JOIN goods g ON s.good_id = g.id 
+		ORDER BY s.id ASC`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var sales []Sale
+	for rows.Next() {
+		var sale Sale
+		if err := rows.Scan(&sale.ID, &sale.GoodID, &sale.GoodName, &sale.GoodCount, &sale.CreateDate); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sales = append(sales, sale)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sales)
+}
+
+// Добавить новую заявку
+// Добавить новую заявку
+func addSale(w http.ResponseWriter, r *http.Request) {
+	var sale Sale
+	if err := json.NewDecoder(r.Body).Decode(&sale); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := db.QueryRow("INSERT INTO sales (good_id, good_count, create_date) VALUES ($1, $2, $3) RETURNING id", sale.GoodID, sale.GoodCount, sale.CreateDate).Scan(&sale.ID)
+	if err != nil {
+		if err.Error() == "Недостаточно товара на складах для добавления заявки." {
+			http.Error(w, "Недостаточно товара на складах для добавления заявки.", http.StatusConflict)
+			return
+		} else if err.Error() == "Количество товара должно быть больше или равно 1." {
+			http.Error(w, "Количество товара должно быть больше или равно 1.", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(sale)
+}
+
+// Обновить заявку
+func updateSale(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	var sale Sale
+	if err := json.NewDecoder(r.Body).Decode(&sale); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec("UPDATE sales SET good_id=$1, good_count=$2, create_date=$3 WHERE id=$4", sale.GoodID, sale.GoodCount, sale.CreateDate, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Удалить заявку
+func deleteSale(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	_, err := db.Exec("DELETE FROM sales WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
