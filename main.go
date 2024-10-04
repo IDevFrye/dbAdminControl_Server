@@ -605,11 +605,14 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 
 	// Определяем количество товара на складе 1
 	var availableInWarehouse1 int
-	err = db.QueryRow("SELECT good_count FROM warehouse1 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse1)
-	if err != nil {
+	err = db.QueryRow("SELECT COALESCE(good_count, 0) FROM warehouse1 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse1)
+	if err != nil && err != sql.ErrNoRows { // Если ошибка не связана с отсутствием строк
 		log.Printf("Error querying warehouse1: %v\n", err)
 		http.Error(w, "Ошибка при запросе товара на складе 1", http.StatusInternalServerError)
 		return
+	} else if err == sql.ErrNoRows {
+		// Если записи о товаре на складе 1 нет, считаем, что товара 0
+		availableInWarehouse1 = 0
 	}
 
 	// Логирование количества товара на складе 1
@@ -617,11 +620,14 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 
 	// Определяем количество товара на складе 2
 	var availableInWarehouse2 int
-	err = db.QueryRow("SELECT good_count FROM warehouse2 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse2)
-	if err != nil {
+	err = db.QueryRow("SELECT COALESCE(good_count, 0) FROM warehouse2 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse2)
+	if err != nil && err != sql.ErrNoRows { // Если ошибка не связана с отсутствием строк
 		log.Printf("Error querying warehouse2: %v\n", err)
 		http.Error(w, "Ошибка при запросе товара на складе 2", http.StatusInternalServerError)
 		return
+	} else if err == sql.ErrNoRows {
+		// Если записи о товаре на складе 2 нет, считаем, что товара 0
+		availableInWarehouse2 = 0
 	}
 
 	// Логирование количества товара на складе 2
@@ -775,6 +781,10 @@ func updateSale(w http.ResponseWriter, r *http.Request) {
 
 	_, err := db.Exec("UPDATE sales SET good_id=$1, good_count=$2, create_date=$3 WHERE id=$4", sale.GoodID, sale.GoodCount, sale.CreateDate, id)
 	if err != nil {
+		if err.Error() == "Недостаточно товара на складах для выполнения заявки." {
+			http.Error(w, "Недостаточно товара на складах для выполнения заявки.", http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
