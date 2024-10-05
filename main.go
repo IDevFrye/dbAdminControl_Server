@@ -172,7 +172,21 @@ func main() {
 	r.Handle("/sales/{id}", authenticate(http.HandlerFunc(updateSale))).Methods("PUT")    // Обновить заявку по ID
 	r.Handle("/sales/{id}", authenticate(http.HandlerFunc(deleteSale))).Methods("DELETE") // Удалить заявку по ID
 
-	// Настройка CORS
+	r.Handle("/wh1", authenticate(http.HandlerFunc(getGoodsWH1))).Methods("GET")
+	r.Handle("/wh1", authenticate(http.HandlerFunc(addGoodsWH1))).Methods("POST")
+	r.Handle("/wh1/{id}", authenticate(http.HandlerFunc(updateGoodsWH1))).Methods("PUT")
+	r.Handle("/wh1/{id}", authenticate(http.HandlerFunc(deleteGoodsWH1))).Methods("DELETE")
+
+	r.Handle("/wh2", authenticate(http.HandlerFunc(getGoodsWH2))).Methods("GET")
+	r.Handle("/wh2", authenticate(http.HandlerFunc(addGoodsWH2))).Methods("POST")
+	r.Handle("/wh2/{id}", authenticate(http.HandlerFunc(updateGoodsWH2))).Methods("PUT")
+	r.Handle("/wh2/{id}", authenticate(http.HandlerFunc(deleteGoodsWH2))).Methods("DELETE")
+
+	r.Handle("/goodsw1", authenticate(http.HandlerFunc(getGoodsw1))).Methods("GET")
+	r.Handle("/goodsw2", authenticate(http.HandlerFunc(getGoodsw2))).Methods("GET")
+	r.Handle("/wadd1", authenticate(http.HandlerFunc(addBatchToWH1))).Methods("POST")
+	r.Handle("/wadd2", authenticate(http.HandlerFunc(addBatchToWH2))).Methods("POST")
+
 	// Настройка CORS
 	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"})
 	methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
@@ -802,4 +816,266 @@ func deleteSale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type GoodWH1 struct {
+	ID        int    `json:"id"`
+	GoodID    int    `json:"good_id"`
+	GoodName  string `json:"good_name"`
+	GoodCount int    `json:"good_count"`
+}
+
+func getGoodsWH1(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+	SELECT w.id, w.good_id, g.name AS good_name, w.good_count
+	FROM warehouse1 w
+	JOIN goods g ON w.good_id = g.id
+	ORDER BY w.id ASC`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var goodsWH1 []GoodWH1
+	for rows.Next() {
+		var good GoodWH1
+		if err := rows.Scan(&good.ID, &good.GoodID, &good.GoodName, &good.GoodCount); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		goodsWH1 = append(goodsWH1, good)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(goodsWH1)
+}
+
+func addGoodsWH1(w http.ResponseWriter, r *http.Request) {
+	var goodwh1 GoodWH1
+	if err := json.NewDecoder(r.Body).Decode(&goodwh1); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := db.QueryRow("INSERT INTO warehouse1 (good_id, good_count) VALUES ($1, $2) RETURNING id", goodwh1.GoodID, goodwh1.GoodCount).Scan(&goodwh1.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(goodwh1)
+}
+
+func updateGoodsWH1(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	var goodwh1 GoodWH1
+	if err := json.NewDecoder(r.Body).Decode(&goodwh1); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec("UPDATE warehouse1 SET good_id=$1, good_count=$2 WHERE id=$3", goodwh1.GoodID, goodwh1.GoodCount, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func deleteGoodsWH1(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	_, err := db.Exec("DELETE FROM warehouse1 WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type GoodWH2 struct {
+	ID        int    `json:"id"`
+	GoodID    int    `json:"good_id"`
+	GoodName  string `json:"good_name"`
+	GoodCount int    `json:"good_count"`
+}
+
+func getGoodsWH2(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+	SELECT w.id, w.good_id, g.name AS good_name, w.good_count
+	FROM warehouse2 w
+	JOIN goods g ON w.good_id=g.id
+	ORDER BY w.id ASC`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var goodswh2 []GoodWH2
+	for rows.Next() {
+		var good GoodWH2
+		if err := rows.Scan(&good.ID, &good.GoodID, &good.GoodName, &good.GoodCount); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		goodswh2 = append(goodswh2, good)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(&goodswh2)
+}
+
+func addGoodsWH2(w http.ResponseWriter, r *http.Request) {
+	var good GoodWH2
+	if err := json.NewDecoder(r.Body).Decode(&good); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err := db.QueryRow("INSERT INTO warehouse2 (good_id, good_count) VALUES ($1, $2) RETURNING id", good.GoodID, good.GoodCount).Scan(&good.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(&good)
+}
+
+func updateGoodsWH2(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	var good GoodWH2
+	if err := json.NewDecoder(r.Body).Decode(&good); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_, err := db.Exec("UPDATE warehouse2 SET good_id=$1, good_count=$2 WHERE id=$3", good.GoodID, good.GoodCount, id)
+	if err != nil {
+		if err.Error() == "Нельзя уменьшать количество товара на складе 2, пока он есть на складе 1" {
+			http.Error(w, "Нельзя уменьшать количество товара на складе 2, пока он есть на складе 1", http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func deleteGoodsWH2(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	_, err := db.Exec("DELETE FROM warehouse2 WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func getGoodsw1(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+	SELECT g.id, g.name
+	FROM goods g
+	lEFT JOIN warehouse1 w ON g.id=w.good_id
+	WHERE w.good_id IS NULL
+	ORDER BY g.name ASC`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var goods []GoodWH1
+	for rows.Next() {
+		var good GoodWH1
+		if err := rows.Scan(&good.ID, &good.GoodName); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		goods = append(goods, good)
+	}
+	fmt.Println(goods)
+
+	w.Header().Set("Content-Type", "json/application")
+	json.NewEncoder(w).Encode(&goods)
+}
+
+func getGoodsw2(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+	SELECT g.id, g.name 
+	FROM goods g
+	lEFT JOIN warehouse2 w ON g.id=w.good_id
+	WHERE w.good_id IS NULL
+	ORDER BY g.name ASC`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var goods []GoodWH2
+	for rows.Next() {
+		var good GoodWH2
+		if err := rows.Scan(&good.ID, &good.GoodName); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		goods = append(goods, good)
+	}
+
+	w.Header().Set("Content-Type", "json/application")
+	json.NewEncoder(w).Encode(&goods)
+}
+
+func addBatchToWH1(w http.ResponseWriter, r *http.Request) {
+	var newGoods []GoodWH1
+	if err := json.NewDecoder(r.Body).Decode(&newGoods); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	for _, good := range newGoods {
+		// Используем INSERT ON CONFLICT для увеличения количества товаров
+		query := `
+            INSERT INTO warehouse1 (good_id, good_count) 
+            VALUES ($1, $2)
+            ON CONFLICT (good_id) 
+            DO UPDATE SET good_count = warehouse1.good_count + EXCLUDED.good_count`
+
+		_, err := db.Exec(query, good.GoodID, good.GoodCount)
+		if err != nil {
+			http.Error(w, "Failed to add/update goods", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func addBatchToWH2(w http.ResponseWriter, r *http.Request) {
+	var newGoods []GoodWH2
+	if err := json.NewDecoder(r.Body).Decode(&newGoods); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	for _, good := range newGoods {
+		// Используем INSERT ON CONFLICT для увеличения количества товаров
+		query := `
+            INSERT INTO warehouse2 (good_id, good_count) 
+            VALUES ($1, $2)
+            ON CONFLICT (good_id) 
+            DO UPDATE SET good_count = warehouse2.good_count + EXCLUDED.good_count`
+
+		_, err := db.Exec(query, good.GoodID, good.GoodCount)
+		if err != nil {
+			http.Error(w, "Failed to add/update goods", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusCreated)
 }
