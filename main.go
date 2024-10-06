@@ -17,22 +17,19 @@ import (
 )
 
 var db *sql.DB
-var jwtKey = []byte("your_secret_key") // Секретный ключ для JWT
+var jwtKey = []byte("your_secret_key")
 
-// Структура для JWT claims
 type Claims struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	jwt.StandardClaims
 }
 
-// Структура для входных данных
 type LoginInput struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// Подключение к базе данных
 func connectDB() {
 	connStr := "user=postgres password=00000 dbname=optsales_1 port=5433 sslmode=disable"
 	var err error
@@ -48,7 +45,6 @@ func connectDB() {
 	fmt.Println("Успешное подключение к БД!")
 }
 
-// Проверка логина и пароля
 func login(w http.ResponseWriter, r *http.Request) {
 	var input LoginInput
 	err := json.NewDecoder(r.Body).Decode(&input)
@@ -57,7 +53,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Проверка пользователя в базе данных
 	var storedHash string
 	var role string
 	err = db.QueryRow("SELECT password_hash, role FROM users WHERE username = $1", input.Username).Scan(&storedHash, &role)
@@ -66,14 +61,12 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Сравнение паролей
 	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(input.Password))
 	if err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// Создание JWT токена
 	expirationTime := time.Now().Add(5 * time.Minute)
 	claims := &Claims{
 		Username: input.Username,
@@ -89,7 +82,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Подготовка ответа
 	response := struct {
 		Token string `json:"token"`
 		Role  string `json:"role"`
@@ -98,23 +90,19 @@ func login(w http.ResponseWriter, r *http.Request) {
 		Role:  role,
 	}
 
-	// Отправка JSON-ответа
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
 
-// Middleware для проверки JWT
 func authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Проверка заголовка Authorization
 		tokenStr := r.Header.Get("Authorization")
 		if tokenStr == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		// Удаление 'Bearer ' из строки токена
 		tokenStr = tokenStr[len("Bearer "):]
 
 		claims := &Claims{}
@@ -145,19 +133,15 @@ func main() {
 
 	r := mux.NewRouter()
 
-	// Авторизация
 	r.HandleFunc("/login", login).Methods("POST")
 
-	// Пример защищенного маршрута
 	r.Handle("/goods", authenticate(http.HandlerFunc(getGoods))).Methods("GET")
 	r.Handle("/top_goods", authenticate(http.HandlerFunc(getTopGoods))).Methods("GET")
 	r.Handle("/demand_change", authenticate(http.HandlerFunc(getDemandChange))).Methods("GET")
 
-	// Новый маршрут для прогнозирования спроса
 	r.Handle("/forecast_demand", authenticate(http.HandlerFunc(forecastDemand))).Methods("GET")
 	r.Handle("/goods-for-transfer", authenticate(http.HandlerFunc(getGoodsForTransfer))).Methods("GET")
 
-	// Новые маршруты для получения данных о складах и продажах
 	r.Handle("/warehouse_counts", authenticate(http.HandlerFunc(getWarehouseCounts))).Methods("GET")
 	r.Handle("/sales_counts", authenticate(http.HandlerFunc(getSalesCounts))).Methods("GET")
 	r.Handle("/transfer-goods", authenticate(http.HandlerFunc(transferGoods))).Methods("POST")
@@ -167,7 +151,6 @@ func main() {
 	r.Handle("/goods/{id}", authenticate(http.HandlerFunc(updateGood))).Methods("PUT")    // Обновить товар по ID
 	r.Handle("/goods/{id}", authenticate(http.HandlerFunc(deleteGood))).Methods("DELETE") // Удалить товар по ID
 
-	// Заявки
 	r.Handle("/sales", authenticate(http.HandlerFunc(getSales))).Methods("GET")           // Получить все заявки
 	r.Handle("/sales", authenticate(http.HandlerFunc(addSale))).Methods("POST")           // Добавить новую заявку
 	r.Handle("/sales/{id}", authenticate(http.HandlerFunc(updateSale))).Methods("PUT")    // Обновить заявку по ID
@@ -189,7 +172,6 @@ func main() {
 
 	r.Handle("/wh/{warehouseId}", authenticate(http.HandlerFunc(getGoodsWH))).Methods("GET")
 
-	// Настройка CORS
 	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"})
 	methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
 	origins := handlers.AllowedOrigins([]string{"*"})
@@ -198,7 +180,6 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8000", handlers.CORS(headers, methods, origins)(r)))
 }
 
-// Обработчик для получения товаров
 func getGoods(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query("SELECT id, name, priority FROM goods")
 	if err != nil {
@@ -227,13 +208,11 @@ func getGoods(w http.ResponseWriter, r *http.Request) {
 		goods = append(goods, g)
 	}
 
-	// Проверка на ошибки при итерации по строкам
 	if err := rows.Err(); err != nil {
 		http.Error(w, fmt.Sprintf("Ошибка итерации по строкам: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Отправляем JSON-ответ
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(goods)
 }
@@ -242,17 +221,12 @@ func getTopGoods(w http.ResponseWriter, r *http.Request) {
 	start := r.URL.Query().Get("start")
 	end := r.URL.Query().Get("end")
 
-	// Проверка на пустые параметры
 	if start == "" || end == "" {
 		http.Error(w, "Start and end parameters are required", http.StatusBadRequest)
 		return
 	}
-
-	// Логирование перед запросом для отладки
 	log.Println("Received start date:", start)
 	log.Println("Received end date:", end)
-
-	// Приведение строковых параметров к типу DATE в запросе
 	query := `
         SELECT g.name, SUM(s.good_count) AS total_sold 
         FROM sales s 
@@ -261,8 +235,6 @@ func getTopGoods(w http.ResponseWriter, r *http.Request) {
         GROUP BY g.name 
         ORDER BY total_sold DESC 
         LIMIT 5`
-
-	// Выполнение запроса с параметрами
 	rows, err := db.Query(query, start, end)
 	if err != nil {
 		log.Println("Error querying top goods:", err)
@@ -276,7 +248,6 @@ func getTopGoods(w http.ResponseWriter, r *http.Request) {
 		TotalSold int    `json:"total_sold"`
 	}
 
-	// Сканирование данных из результата запроса
 	for rows.Next() {
 		var good struct {
 			Name      string `json:"name"`
@@ -290,7 +261,7 @@ func getTopGoods(w http.ResponseWriter, r *http.Request) {
 		topGoods = append(topGoods, good)
 	}
 	log.Println("Fetched top goods:", topGoods)
-	// Отправка ответа в формате JSON
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(topGoods)
 }
@@ -335,8 +306,6 @@ func getDemandChange(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(demandData)
 }
 
-// Обработчик для получения количества товаров на складах
-// Обработчик для получения количества товаров на складах
 func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 	goodID := r.URL.Query().Get("good_id")
 	if goodID == "" {
@@ -344,7 +313,6 @@ func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Запрос для получения количества товара из обеих таблиц складов
 	query := `
         SELECT 
             COALESCE((SELECT good_count FROM warehouse1 WHERE good_id = $1), 0) AS warehouse1_count,
@@ -358,7 +326,6 @@ func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Создание структуры ответа
 	response := struct {
 		Warehouse1Count int64 `json:"warehouse1_count"`
 		Warehouse2Count int64 `json:"warehouse2_count"`
@@ -371,7 +338,6 @@ func getWarehouseCounts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Функция для преобразования sql.NullInt64 в указатель на int64
 func nullInt64ToPtr(n sql.NullInt64) *int64 {
 	if !n.Valid {
 		return nil
@@ -380,12 +346,10 @@ func nullInt64ToPtr(n sql.NullInt64) *int64 {
 }
 
 func getSalesCounts(w http.ResponseWriter, r *http.Request) {
-	// Получаем good_id из запроса
 	goodID := r.URL.Query().Get("good_id")
 	var quantity int
 	var priority float64
 
-	// Подключение к базе данных и выполнение запроса
 	err := db.QueryRow(`
         SELECT COALESCE(SUM(s.good_count), 0) AS total_quantity, COALESCE(g.priority, 0) AS priority 
         FROM sales s 
@@ -395,7 +359,6 @@ func getSalesCounts(w http.ResponseWriter, r *http.Request) {
     `, goodID).Scan(&quantity, &priority)
 
 	if err != nil {
-		// Проверяем, не является ли ошибка ошибкой "no rows"
 		if err == sql.ErrNoRows {
 			quantity = 0
 			priority = 0
@@ -405,7 +368,6 @@ func getSalesCounts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Возвращаем данные в формате JSON
 	response := map[string]interface{}{
 		"quantity": quantity,
 		"priority": priority,
@@ -427,9 +389,8 @@ func forecastDemand(w http.ResponseWriter, r *http.Request) {
 
 	var day2Count int
 	var diff float64
-	var forecast float64 // Можем игнорировать это значение, но оно необходимо для вызова процедуры
+	var forecast float64
 
-	// Используем QueryRow для получения значений из OUT параметров хранимой процедуры
 	err := db.QueryRow(`CALL forecast_demand2($1::DATE, $2::DATE, $3::INT, $4::DOUBLE PRECISION, $5::INT, $6::DOUBLE PRECISION)`,
 		startDate, endDate, goodID, &forecast, &day2Count, &diff).Scan(&forecast, &day2Count, &diff)
 
@@ -439,10 +400,8 @@ func forecastDemand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Логирование возвращаемых значений
 	log.Printf("day2Count: %d, diff: %f", day2Count, diff)
 
-	// Расчет прогнозов на 7 дней
 	forecasts := make([]float64, 7)
 	for i := 0; i < 7; i++ {
 		forecasts[i] = float64(day2Count) + (diff * float64(i+1))
@@ -459,14 +418,13 @@ func forecastDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 type GoodForTransfer struct {
-	GoodID         int     `json:"good_id"` // Добавлено поле ID
+	GoodID         int     `json:"good_id"`
 	GoodName       string  `json:"good_name"`
 	NeedToTransfer string  `json:"need_to_transfer"`
 	Priority       float64 `json:"priority"`
 }
 
 func getGoodsForTransfer(w http.ResponseWriter, r *http.Request) {
-	// Вызов хранимой функции или SQL-запроса, который должен возвращать ID товара
 	rows, err := db.Query("SELECT good_id, good_name, need_to_transfer, priority FROM get_goods_for_transfer()") // Изменено на good_id
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Ошибка выполнения запроса: %v", err), http.StatusInternalServerError)
@@ -474,13 +432,9 @@ func getGoodsForTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	// Массив для хранения результатов
 	var goodsForTransfer []GoodForTransfer
-
-	// Обрабатываем строки результата
 	for rows.Next() {
 		var g GoodForTransfer
-		// Сканируем также поле ID товара
 		if err := rows.Scan(&g.GoodID, &g.GoodName, &g.NeedToTransfer, &g.Priority); err != nil {
 			http.Error(w, fmt.Sprintf("Ошибка чтения строки: %v", err), http.StatusInternalServerError)
 			return
@@ -488,13 +442,11 @@ func getGoodsForTransfer(w http.ResponseWriter, r *http.Request) {
 		goodsForTransfer = append(goodsForTransfer, g)
 	}
 
-	// Проверяем наличие ошибок при итерации по строкам
 	if err := rows.Err(); err != nil {
 		http.Error(w, fmt.Sprintf("Ошибка итерации по строкам: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Отправляем JSON-ответ
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(goodsForTransfer)
 }
@@ -505,7 +457,6 @@ type Good struct {
 	Priority float64 `json:"priority"`
 }
 
-// Получить все товары
 func getGoods1(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query("SELECT id, name, priority FROM goods ORDER BY id ASC")
 	if err != nil {
@@ -528,7 +479,6 @@ func getGoods1(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(goods)
 }
 
-// Добавить новый товар
 func addGood(w http.ResponseWriter, r *http.Request) {
 	var good Good
 	if err := json.NewDecoder(r.Body).Decode(&good); err != nil {
@@ -546,7 +496,6 @@ func addGood(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(good)
 }
 
-// Обновить товар
 func updateGood(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	var good Good
@@ -564,13 +513,10 @@ func updateGood(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Удалить товар
-// Удалить товар
 func deleteGood(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	_, err := db.Exec("DELETE FROM goods WHERE id=$1", id)
 	if err != nil {
-		// Если ошибка удаления связана с триггером, возвращаем ошибку с сообщением
 		if err.Error() == "pq: Невозможно удалить товар, так как он находится на складе 2" {
 			http.Error(w, "Невозможно удалить товар, так как он находится на складе 2", http.StatusConflict)
 			return
@@ -582,32 +528,23 @@ func deleteGood(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// API для перевода товара со второго склада на первый
 type TransferRequest struct {
-	GoodID         int `json:"good_id"` // ID товара
-	TransferAmount int `json:"amount"`  // Количество для перевода
+	GoodID         int `json:"good_id"`
+	TransferAmount int `json:"amount"`
 }
 
-// API для обработки списания товара с учетом заявок
 func transferGoods(w http.ResponseWriter, r *http.Request) {
 	var transfer TransferRequest
-
-	// Попытка декодирования JSON
 	if err := json.NewDecoder(r.Body).Decode(&transfer); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Логирование полученных данных
 	log.Printf("Received transfer request: %+v\n", transfer)
-
-	// Проверяем, что получили нужные поля
 	if transfer.GoodID == 0 || transfer.TransferAmount == 0 {
 		http.Error(w, "Неверные данные: good_id или amount не указаны", http.StatusBadRequest)
 		return
 	}
 
-	// Определяем количество товара в заявках (sales)
 	var salesCount int
 	err := db.QueryRow("SELECT SUM(good_count) FROM sales WHERE good_id=$1", transfer.GoodID).Scan(&salesCount)
 	if err != nil {
@@ -615,57 +552,44 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Ошибка при запросе количества товара в заявках", http.StatusInternalServerError)
 		return
 	}
-
-	// Логирование количества товара в заявках
 	log.Printf("Sales count for good_id %d: %d\n", transfer.GoodID, salesCount)
 
-	// Определяем количество товара на складе 1
 	var availableInWarehouse1 int
 	err = db.QueryRow("SELECT COALESCE(good_count, 0) FROM warehouse1 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse1)
-	if err != nil && err != sql.ErrNoRows { // Если ошибка не связана с отсутствием строк
+	if err != nil && err != sql.ErrNoRows {
 		log.Printf("Error querying warehouse1: %v\n", err)
 		http.Error(w, "Ошибка при запросе товара на складе 1", http.StatusInternalServerError)
 		return
 	} else if err == sql.ErrNoRows {
-		// Если записи о товаре на складе 1 нет, считаем, что товара 0
 		availableInWarehouse1 = 0
 	}
 
-	// Логирование количества товара на складе 1
 	log.Printf("Available in warehouse1 for good_id %d: %d\n", transfer.GoodID, availableInWarehouse1)
 
-	// Определяем количество товара на складе 2
 	var availableInWarehouse2 int
 	err = db.QueryRow("SELECT COALESCE(good_count, 0) FROM warehouse2 WHERE good_id=$1", transfer.GoodID).Scan(&availableInWarehouse2)
-	if err != nil && err != sql.ErrNoRows { // Если ошибка не связана с отсутствием строк
+	if err != nil && err != sql.ErrNoRows {
 		log.Printf("Error querying warehouse2: %v\n", err)
 		http.Error(w, "Ошибка при запросе товара на складе 2", http.StatusInternalServerError)
 		return
 	} else if err == sql.ErrNoRows {
-		// Если записи о товаре на складе 2 нет, считаем, что товара 0
 		availableInWarehouse2 = 0
 	}
-
-	// Логирование количества товара на складе 2
 	log.Printf("Available in warehouse2 for good_id %d: %d\n", transfer.GoodID, availableInWarehouse2)
 
-	// Проверка на возможность выполнения всех заявок
 	if availableInWarehouse1+availableInWarehouse2 < salesCount {
 		log.Printf("Not enough goods for sales: available (%d+%d) < sales (%d)\n", availableInWarehouse1, availableInWarehouse2, salesCount)
 		http.Error(w, "Невозможно выполнить заявки по товару — недостаточно товара на складах", http.StatusBadRequest)
 		return
 	}
 
-	// Открываем транзакцию для атомарных операций
 	tx, err := db.Begin()
 	if err != nil {
 		http.Error(w, "Ошибка при создании транзакции", http.StatusInternalServerError)
 		return
 	}
 
-	// Логика списания товара
 	if availableInWarehouse1 >= salesCount {
-		// Если товара на складе 1 достаточно для выполнения всех заявок
 		_, err = tx.Exec("UPDATE warehouse1 SET good_count = good_count - $1 WHERE good_id = $2", salesCount, transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
@@ -673,7 +597,6 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Ошибка при списании товара со склада 1", http.StatusInternalServerError)
 			return
 		}
-		// Удаляем выполненные заявки
 		_, err = tx.Exec("DELETE FROM sales WHERE good_id = $1", transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
@@ -682,7 +605,6 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Если товара на складе 1 недостаточно, списываем все с первого склада
 		_, err = tx.Exec("UPDATE warehouse1 SET good_count = 0 WHERE good_id = $1", transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
@@ -690,8 +612,6 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Ошибка при списании товара со склада 1", http.StatusInternalServerError)
 			return
 		}
-
-		// Списываем недостающее количество с второго склада
 		remainingSalesCount := salesCount - availableInWarehouse1
 		_, err = tx.Exec("UPDATE warehouse2 SET good_count = good_count - $1 WHERE good_id = $2", remainingSalesCount, transfer.GoodID)
 		if err != nil {
@@ -701,7 +621,6 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Удаляем выполненные заявки
 		_, err = tx.Exec("DELETE FROM sales WHERE good_id = $1", transfer.GoodID)
 		if err != nil {
 			tx.Rollback()
@@ -711,7 +630,6 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Фиксируем транзакцию
 	err = tx.Commit()
 	if err != nil {
 		log.Printf("Error committing transaction: %v\n", err)
@@ -723,17 +641,14 @@ func transferGoods(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Товар успешно списан и заявки выполнены"))
 }
 
-// Структура для заявки
 type Sale struct {
 	ID         int    `json:"id"`
 	GoodID     int    `json:"good_id"`
 	GoodCount  int    `json:"good_count"`
 	CreateDate string `json:"create_date"`
-	GoodName   string `json:"good_name"` // Новое поле для названия товара
+	GoodName   string `json:"good_name"`
 }
 
-// Получить все заявки
-// Получить заявки
 func getSales(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
 		SELECT s.id, s.good_id, g.name AS good_name, s.good_count, s.create_date 
@@ -760,8 +675,6 @@ func getSales(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sales)
 }
 
-// Добавить новую заявку
-// Добавить новую заявку
 func addSale(w http.ResponseWriter, r *http.Request) {
 	var sale Sale
 	if err := json.NewDecoder(r.Body).Decode(&sale); err != nil {
@@ -786,7 +699,6 @@ func addSale(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sale)
 }
 
-// Обновить заявку
 func updateSale(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	var sale Sale
@@ -808,7 +720,6 @@ func updateSale(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Удалить заявку
 func deleteSale(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	_, err := db.Exec("DELETE FROM sales WHERE id=$1", id)
@@ -1047,9 +958,8 @@ func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var newGoods []map[string]interface{} // Используем map для работы с полями, которые могут быть строками
+	var newGoods []map[string]interface{}
 
-	// Декодируем JSON тело запроса
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&newGoods); err != nil {
 		log.Printf("Failed to decode JSON body: %v", err)
@@ -1057,7 +967,6 @@ func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Преобразуем поля good_id в число, если они пришли в виде строк
 	var convertedGoods []GoodWH
 	for _, good := range newGoods {
 		goodID, ok := good["good_id"].(string)
@@ -1066,14 +975,12 @@ func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Преобразуем строку в число
 		goodIDInt, err := strconv.Atoi(goodID)
 		if err != nil {
 			http.Error(w, "Invalid good_id value", http.StatusBadRequest)
 			return
 		}
 
-		// Преобразуем good_count в int, если он пришёл как строка
 		goodCountFloat, ok := good["good_count"].(float64)
 		if !ok {
 			http.Error(w, "Invalid good_count format", http.StatusBadRequest)
@@ -1081,14 +988,12 @@ func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
 		}
 		goodCount := int(goodCountFloat)
 
-		// Добавляем преобразованный товар в массив
 		convertedGoods = append(convertedGoods, GoodWH{
 			GoodID:    goodIDInt,
 			GoodCount: goodCount,
 		})
 	}
 
-	// Выполняем запросы в зависимости от warehouseId
 	var query string
 	if warehouseID == "1" {
 		query = `
@@ -1102,7 +1007,6 @@ func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
             WHERE good_id = $1`
 	}
 
-	// Выполняем запросы
 	for _, good := range convertedGoods {
 		_, err := db.Exec(query, good.GoodID, good.GoodCount)
 		if err != nil {
@@ -1112,20 +1016,15 @@ func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Отправляем успешный ответ
 	w.WriteHeader(http.StatusCreated)
 }
 
 func getGoodsWH(w http.ResponseWriter, r *http.Request) {
-	// Получаем warehouseId из пути
 	fmt.Println("GET request received on /wh/{warehouseId}")
-
-	// Извлечение ID склада
 	vars := mux.Vars(r)
 	warehouseID := vars["warehouseId"]
 	fmt.Printf("Warehouse ID: %s\n", warehouseID)
 
-	// Проверка значения warehouseID
 	if warehouseID != "1" && warehouseID != "2" {
 		http.Error(w, "Invalid warehouse ID", http.StatusBadRequest)
 		return
@@ -1133,7 +1032,6 @@ func getGoodsWH(w http.ResponseWriter, r *http.Request) {
 
 	var query string
 
-	// В зависимости от warehouseId выбираем нужную таблицу
 	switch warehouseID {
 	case "1":
 		query = `
@@ -1152,7 +1050,6 @@ func getGoodsWH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Выполняем запрос
 	rows, err := db.Query(query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1160,7 +1057,7 @@ func getGoodsWH(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var goods []GoodWH // используем общий тип для товаров
+	var goods []GoodWH
 	for rows.Next() {
 		var good GoodWH
 		if err := rows.Scan(&good.ID, &good.GoodID, &good.GoodName, &good.GoodCount); err != nil {
@@ -1170,7 +1067,6 @@ func getGoodsWH(w http.ResponseWriter, r *http.Request) {
 		goods = append(goods, good)
 	}
 
-	// Отправляем результат в формате JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(goods)
 }
