@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
@@ -184,8 +185,9 @@ func main() {
 
 	r.Handle("/goodsw1", authenticate(http.HandlerFunc(getGoodsw1))).Methods("GET")
 	r.Handle("/goodsw2", authenticate(http.HandlerFunc(getGoodsw2))).Methods("GET")
-	r.Handle("/wadd1", authenticate(http.HandlerFunc(addBatchToWH1))).Methods("POST")
-	r.Handle("/wadd2", authenticate(http.HandlerFunc(addBatchToWH2))).Methods("POST")
+	r.Handle("/wadd/{warehouseId}", authenticate(http.HandlerFunc(addBatchToWarehouse))).Methods("POST")
+
+	r.Handle("/wh/{warehouseId}", authenticate(http.HandlerFunc(getGoodsWH))).Methods("GET")
 
 	// Настройка CORS
 	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type", "Authorization"})
@@ -997,7 +999,6 @@ func getGoodsw1(w http.ResponseWriter, r *http.Request) {
 		}
 		goods = append(goods, good)
 	}
-	fmt.Println(goods)
 
 	w.Header().Set("Content-Type", "json/application")
 	json.NewEncoder(w).Encode(&goods)
@@ -1030,52 +1031,146 @@ func getGoodsw2(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(&goods)
 }
 
-func addBatchToWH1(w http.ResponseWriter, r *http.Request) {
-	var newGoods []GoodWH1
-	if err := json.NewDecoder(r.Body).Decode(&newGoods); err != nil {
+type GoodWH struct {
+	ID        int    `json:"id"`
+	GoodID    int    `json:"good_id"`
+	GoodName  string `json:"good_name"`
+	GoodCount int    `json:"good_count"`
+}
+
+func addBatchToWarehouse(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	warehouseID := vars["warehouseId"]
+
+	if warehouseID != "1" && warehouseID != "2" {
+		http.Error(w, "Invalid warehouse ID", http.StatusBadRequest)
+		return
+	}
+
+	var newGoods []map[string]interface{} // Используем map для работы с полями, которые могут быть строками
+
+	// Декодируем JSON тело запроса
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&newGoods); err != nil {
+		log.Printf("Failed to decode JSON body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
+	// Преобразуем поля good_id в число, если они пришли в виде строк
+	var convertedGoods []GoodWH
 	for _, good := range newGoods {
-		// Используем INSERT ON CONFLICT для увеличения количества товаров
-		query := `
-            INSERT INTO warehouse1 (good_id, good_count) 
-            VALUES ($1, $2)
-            ON CONFLICT (good_id) 
-            DO UPDATE SET good_count = warehouse1.good_count + EXCLUDED.good_count`
+		goodID, ok := good["good_id"].(string)
+		if !ok {
+			http.Error(w, "Invalid good_id format", http.StatusBadRequest)
+			return
+		}
 
+		// Преобразуем строку в число
+		goodIDInt, err := strconv.Atoi(goodID)
+		if err != nil {
+			http.Error(w, "Invalid good_id value", http.StatusBadRequest)
+			return
+		}
+
+		// Преобразуем good_count в int, если он пришёл как строка
+		goodCountFloat, ok := good["good_count"].(float64)
+		if !ok {
+			http.Error(w, "Invalid good_count format", http.StatusBadRequest)
+			return
+		}
+		goodCount := int(goodCountFloat)
+
+		// Добавляем преобразованный товар в массив
+		convertedGoods = append(convertedGoods, GoodWH{
+			GoodID:    goodIDInt,
+			GoodCount: goodCount,
+		})
+	}
+
+	// Выполняем запросы в зависимости от warehouseId
+	var query string
+	if warehouseID == "1" {
+		query = `
+            UPDATE warehouse1 
+            SET good_count = good_count + $2 
+            WHERE good_id = $1`
+	} else if warehouseID == "2" {
+		query = `
+            UPDATE warehouse2 
+            SET good_count = good_count + $2 
+            WHERE good_id = $1`
+	}
+
+	// Выполняем запросы
+	for _, good := range convertedGoods {
 		_, err := db.Exec(query, good.GoodID, good.GoodCount)
 		if err != nil {
+			log.Printf("Failed to execute query for good_id: %d, error: %v\n", good.GoodID, err)
 			http.Error(w, "Failed to add/update goods", http.StatusInternalServerError)
 			return
 		}
 	}
 
+	// Отправляем успешный ответ
 	w.WriteHeader(http.StatusCreated)
 }
 
-func addBatchToWH2(w http.ResponseWriter, r *http.Request) {
-	var newGoods []GoodWH2
-	if err := json.NewDecoder(r.Body).Decode(&newGoods); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+func getGoodsWH(w http.ResponseWriter, r *http.Request) {
+	// Получаем warehouseId из пути
+	fmt.Println("GET request received on /wh/{warehouseId}")
+
+	// Извлечение ID склада
+	vars := mux.Vars(r)
+	warehouseID := vars["warehouseId"]
+	fmt.Printf("Warehouse ID: %s\n", warehouseID)
+
+	// Проверка значения warehouseID
+	if warehouseID != "1" && warehouseID != "2" {
+		http.Error(w, "Invalid warehouse ID", http.StatusBadRequest)
 		return
 	}
 
-	for _, good := range newGoods {
-		// Используем INSERT ON CONFLICT для увеличения количества товаров
-		query := `
-            INSERT INTO warehouse2 (good_id, good_count) 
-            VALUES ($1, $2)
-            ON CONFLICT (good_id) 
-            DO UPDATE SET good_count = warehouse2.good_count + EXCLUDED.good_count`
+	var query string
 
-		_, err := db.Exec(query, good.GoodID, good.GoodCount)
-		if err != nil {
-			http.Error(w, "Failed to add/update goods", http.StatusInternalServerError)
-			return
-		}
+	// В зависимости от warehouseId выбираем нужную таблицу
+	switch warehouseID {
+	case "1":
+		query = `
+			SELECT w.id, w.good_id, g.name AS good_name, w.good_count
+			FROM warehouse1 w
+			JOIN goods g ON w.good_id = g.id
+			ORDER BY w.id ASC`
+	case "2":
+		query = `
+			SELECT w.id, w.good_id, g.name AS good_name, w.good_count
+			FROM warehouse2 w
+			JOIN goods g ON w.good_id = g.id
+			ORDER BY w.id ASC`
+	default:
+		http.Error(w, "Invalid warehouse ID", http.StatusBadRequest)
+		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	// Выполняем запрос
+	rows, err := db.Query(query)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var goods []GoodWH // используем общий тип для товаров
+	for rows.Next() {
+		var good GoodWH
+		if err := rows.Scan(&good.ID, &good.GoodID, &good.GoodName, &good.GoodCount); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		goods = append(goods, good)
+	}
+
+	// Отправляем результат в формате JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(goods)
 }
