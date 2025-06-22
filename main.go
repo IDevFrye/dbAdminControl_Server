@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 )
 
 var db *sql.DB
-var jwtKey = []byte("your_secret_key")
+var jwtKey = []byte(os.Getenv("JWT_SECRET"))
 
 type Claims struct {
 	Username string `json:"username"`
@@ -31,18 +32,22 @@ type LoginInput struct {
 }
 
 func connectDB() {
-	connStr := "user=postgres password=00000 dbname=optsales_1 port=5433 sslmode=disable"
-	var err error
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatal(err)
-	}
+    connStr := os.Getenv("DB_URL")
+    if connStr == "" {
+        connStr = "user=postgres password=00000 dbname=optsales_1 port=5433 sslmode=disable" // для локальной разработки
+    }
 
-	err = db.Ping()
-	if err != nil {
-		log.Fatal("Не удалось подключиться к БД: ", err)
-	}
-	fmt.Println("Успешное подключение к БД!")
+    var err error
+    db, err = sql.Open("postgres", connStr)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    err = db.Ping()
+    if err != nil {
+        log.Fatal("Не удалось подключиться к БД: ", err)
+    }
+    fmt.Println("Успешное подключение к БД!")
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +134,9 @@ func authenticate(next http.Handler) http.Handler {
 }
 
 func main() {
+	
+
+
 	connectDB()
 
 	r := mux.NewRouter()
